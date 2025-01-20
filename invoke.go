@@ -47,6 +47,8 @@ func invokeCommand[R any](transformer func(line []byte) *R, cmd string, args ...
 		slog.Warn("could not capture stderr for command")
 	}
 
+	slog.Debug("stderr", "text", buf.String())
+
 	if err := command.Wait(); err != nil {
 		return nil, errors.New(fmt.Sprintf("%s, %s", buf.String(), err))
 	}

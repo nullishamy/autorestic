@@ -17,6 +17,8 @@ func (r *StatusMessage) Marshal() ([]byte, error) {
 type StatusMessage struct {
 	MessageType  string   `json:"message_type"`
 	PercentDone  float64  `json:"percent_done"`
+	SecondsElapsed int64  `json:"seconds_elapsed"`
+	SecondsRemaining int64  `json:"seconds_remaining"`
 	TotalFiles   int64    `json:"total_files"`
 	FilesDone    int64    `json:"files_done"`
 	TotalBytes   int64    `json:"total_bytes"`

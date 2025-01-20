@@ -37,8 +37,14 @@ func actionUntypedMessage(m UntypedMessage, rest []byte) *SummaryMessage {
 		if err != nil {
 			log.Panic(err)
 		}
+		
+		elapsed, _ := time.ParseDuration(fmt.Sprintf("%ds", int64(status.SecondsElapsed)))
+		remaining, _ := time.ParseDuration(fmt.Sprintf("%ds", int64(status.SecondsRemaining)))
+		
 		slog.Info("Status update",
 			"done", fmt.Sprintf("%.2f%%", status.PercentDone*100),
+			"elapsed", elapsed,
+			"remaining", remaining,
 			"files-done", status.FilesDone,
 			"files-total", status.TotalFiles,
 			"current-files", status.CurrentFiles,
@@ -121,7 +127,7 @@ func sendResult(logs string, success bool, summary *SummaryMessage) {
 	if !success {
 		message.SetContent("@everyone restic backup failure")
 	}
-	
+
 	_, err = client.CreateMessage(message.Build())
 
 	if err != nil {
@@ -130,7 +136,7 @@ func sendResult(logs string, success bool, summary *SummaryMessage) {
 	}
 }
 
-func main() {
+func doBackup(location string) {
 	capturedLogs := new(strings.Builder)
 
 	defer func() {
@@ -141,7 +147,17 @@ func main() {
 		}
 	}()
 
-	logger := slog.New(slog.NewTextHandler(capturedLogs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := slog.New(
+		NewTeeLogger(
+			slog.NewTextHandler(capturedLogs, &slog.HandlerOptions{Level: slog.LevelInfo}),
+			slog.NewTextHandler(
+				os.Stderr,
+				&slog.HandlerOptions{
+					Level: slog.LevelDebug,
+				},
+			),
+		),
+	)
 	slog.SetDefault(logger)
 
 	fps := os.Getenv("RESTIC_PROGRESS_FPS")
@@ -150,6 +166,30 @@ func main() {
 		os.Setenv("RESTIC_PROGRESS_FPS", "0.016666")
 	}
 
+	_, err := invokeCommand(consume, "restic", "cat", "config")
+	if err != nil {
+		slog.Error("restic repo invalid, could not cat config", "err", err)
+		return
+	}
+
+	ignore := os.Getenv("AUTORESTIC_IGNORE")
+
+	slog.Info("Backing up", "dir", location)
+	args := []string{"backup", location}
+	if ignore != "" {
+		args = append(args, "--exclude")
+		args = append(args, ignore)
+	}
+	
+	summary, _ := invokeCommand(
+		unmarshalThen(UnmarshalUntypedMessage, actionUntypedMessage),
+		"restic", args...,
+	)
+
+	sendResult(capturedLogs.String(), true, summary)
+}
+
+func main() {
 	if os.Getenv("AUTORESTIC_WEBHOOK") == "" {
 		log.Panic("Cannot proceed without a webhook to send to, set AUTORESTIC_WEBHOOK")
 	}
@@ -163,21 +203,8 @@ func main() {
 	if len(locations) == 0 {
 		log.Panic("Cannot proceed with no valid locations set AUTORESTIC_LOCATIONS to a comma separated list of directories")
 	}
-	
-	_, err := invokeCommand(consume, "restic", "cat", "config")
-	if err != nil {
-		slog.Error("restic repo invalid, could not cat config", "err", err)
-		return
-	}
 
 	for _, location := range locations {
-		slog.Info("Backing up", "dir", location)
-		summary, _ := invokeCommand(
-			unmarshalThen(UnmarshalUntypedMessage, actionUntypedMessage),
-			"restic", "backup", location,
-		)
-		
-		sendResult(capturedLogs.String(), true, summary)
-		capturedLogs = new(strings.Builder)
+		doBackup(location)
 	}
 }
